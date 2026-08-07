@@ -69,7 +69,7 @@ func TestFetch_BodySizeIsCapped(t *testing.T) {
 		// Write more than the 5MB cap so we can confirm Fetch truncates
 		// instead of reading it all into memory.
 		chunk := strings.Repeat("a", 1<<20) // 1MB
-		for i := 0; i < 6; i++ {
+		for range 6 {
 			w.Write([]byte(chunk))
 		}
 	}))
