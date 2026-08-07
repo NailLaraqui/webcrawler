@@ -1,0 +1,43 @@
+# Compiled binaries and executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.prof
+
+# Architecture specific extensions
+*.5
+*.6
+*.8
+
+# Output of the go build command (if you name your binary)
+/bin/
+/[A-Za-z0-9_-]/
+
+# Dependency directories
+# (Only uncomment if you do not want to vendor dependencies)
+# vendor/
+
+# Go test coverage files
+*.out
+*.cover
+c.out
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Environmental variables and secrets
+.env
+.env.*
