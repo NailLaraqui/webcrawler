@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const UserAgent = "go-webcrawler/0.1 (learning project)"
+
 // Client wraps an http.Client configured for crawling.
 type Client struct {
 	http *http.Client
@@ -32,7 +34,7 @@ func (c *Client) Fetch(ctx context.Context, url string) (string, error) {
 		return "", fmt.Errorf("building request: %w", err)
 	}
 
-	req.Header.Set("User-Agent", "go-webcrawler/0.1 (learning project)")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
