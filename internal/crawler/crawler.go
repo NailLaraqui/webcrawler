@@ -8,6 +8,7 @@ import (
 
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
 	"github.com/NailLaraqui/webcrawler/internal/parser"
+	"github.com/NailLaraqui/webcrawler/internal/robots"
 )
 
 // Result is emitted once per page visited (successfully or not).
@@ -23,6 +24,11 @@ type Config struct {
 	MaxDepth       int  // 0 = only the start page
 	MaxConcurrency int  // upper bound on simultaneous in-flight requests
 	SameHostOnly   bool // if true, never follow links to other hosts
+
+	// Robots, if non-nil, is consulted before every fetch. URLs it
+	// disallows are reported as a Result with Err = robots.ErrDisallowed
+	// instead of being fetched. Leave nil to skip robots.txt entirely.
+	Robots *robots.Checker
 }
 
 // Crawler crawls pages concurrently starting from a seed URL.
@@ -97,6 +103,21 @@ func (c *Crawler) worker(ctx context.Context, j job) {
 	case <-ctx.Done():
 		return
 	default:
+	}
+
+	// Robots.txt is checked while still holding our semaphore slot: for
+	// most URLs this is instant (cached after the first page per host),
+	// but the very first request to a new host pays the robots.txt
+	// round-trip here. That's an acceptable trade-off for simplicity —
+	// it naturally throttles the "thundering herd" of first requests to
+	// a brand-new host instead of firing them all before robots.txt
+	// rules are known.
+	if c.cfg.Robots != nil && !c.cfg.Robots.Allowed(ctx, j.url) {
+		select {
+		case c.results <- Result{URL: j.url, Depth: j.depth, Err: robots.ErrDisallowed}:
+		case <-ctx.Done():
+		}
+		return
 	}
 
 	body, err := c.fetch.Fetch(ctx, j.url)
