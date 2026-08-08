@@ -12,16 +12,18 @@ import (
 
 	"github.com/NailLaraqui/webcrawler/internal/crawler"
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
+	"github.com/NailLaraqui/webcrawler/internal/robots"
 )
 
 func main() {
 	var (
-		start         = flag.String("url", "", "seed URL to start crawling from (required)")
-		maxDepth      = flag.Int("depth", 2, "maximum link depth to follow")
-		maxConcurrent = flag.Int("concurrency", 8, "maximum simultaneous requests")
-		timeout       = flag.Duration("timeout", 30*time.Second, "overall crawl timeout")
-		reqTimeout    = flag.Duration("req-duration", 5*time.Second, "per-request timeout")
-		sameHost      = flag.Bool("same-host", true, "only follow links on the same host as the seed URL")
+		start          = flag.String("url", "", "seed URL to start crawling from (required)")
+		maxDepth       = flag.Int("depth", 2, "maximum link depth to follow")
+		maxConcurrent  = flag.Int("concurrency", 8, "maximum simultaneous requests")
+		timeout        = flag.Duration("timeout", 30*time.Second, "overall crawl timeout")
+		reqTimeout     = flag.Duration("req-duration", 5*time.Second, "per-request timeout")
+		sameHost       = flag.Bool("same-host", true, "only follow links on the same host as the seed URL")
+		respectsRobots = flag.Bool("respect-robots", true, "check robots.txt before fetching each page")
 	)
 	flag.Parse()
 
@@ -41,10 +43,17 @@ func main() {
 	defer stop()
 
 	fc := fetcher.New(*reqTimeout)
+
+	var robotsChecker *robots.Checker
+	if *respectsRobots {
+		robotsChecker = robots.New(fc, fetcher.UserAgent)
+	}
+
 	cw := crawler.New(crawler.Config{
 		MaxDepth:       *maxDepth,
 		MaxConcurrency: *maxConcurrent,
 		SameHostOnly:   *sameHost,
+		Robots:         robotsChecker,
 	}, fc)
 
 	fmt.Printf("Crawling %s (depth=%d, concurrency=%d, timeout=%s)\n\n", *start, *maxDepth, *maxConcurrent, *timeout)
