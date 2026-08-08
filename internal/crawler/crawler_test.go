@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
+	"github.com/NailLaraqui/webcrawler/internal/robots"
 )
 
 // newLinkedSite returns a test server whose pages link to each other
@@ -22,7 +24,6 @@ func newLinkedSite(t *testing.T, graph map[string][]string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	for path, links := range graph {
-		links := links
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(20 * time.Millisecond)
 			body := ""
@@ -236,5 +237,51 @@ func TestCrawler_StopsOnContextCancellation(t *testing.T) {
 		// good: Run's results channel closed once context was cancelled
 	case <-time.After(2 * time.Second):
 		t.Fatal("crawl did not stop after context cancellation; possible goroutine/deadlock bug")
+	}
+}
+
+func TestCrawler_RespectsRobotsTxt(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("User-agent: *\nDisallow: /forbidden\n"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<a href="/forbidden">nope</a><a href="/ok">ok</a>`))
+	})
+	mux.HandleFunc("/forbidden", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("should never be fetched"))
+	})
+	mux.HandleFunc("/ok", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("fine"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	fc := fetcher.New(2 * time.Second)
+	checker := robots.New(fc, fetcher.UserAgent)
+	cw := New(Config{MaxDepth: 1, MaxConcurrency: 4, Robots: checker}, fc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	results := map[string]Result{}
+	for r := range cw.Run(ctx, srv.URL+"/") {
+		results[r.URL] = r
+	}
+
+	forbidden, ok := results[srv.URL+"/forbidden"]
+	if !ok {
+		t.Fatal("expected a Result for /forbidden even though it was skipped")
+	}
+	if !errors.Is(forbidden.Err, robots.ErrDisallowed) {
+		t.Errorf("/forbidden Err = %v, want robots.ErrDisallowed", forbidden.Err)
+	}
+
+	okResult, exists := results[srv.URL+"/ok"]
+	if !exists {
+		t.Fatal("expected /ok to be visited")
+	}
+	if okResult.Err != nil {
+		t.Errorf("/ok should have been fetched normally, got err %v", okResult.Err)
 	}
 }
