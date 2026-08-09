@@ -19,6 +19,7 @@ Available flags:
 | `-req-timeout` | 5s | Per-HTTP-request timeout |
 | `-same-host` | true | Only follow links sharing the same host as the seed |
 | `-respect-robots` | true | Check robots.txt before fetching each page |
+| `-min-delay` | 0 | Default minimum delay between requests to the same host (a host's robots.txt Crawl-delay, if present, is used instead for that host) |
 
 Pressing `Ctrl + C` gracefully interrupts the crawl (propagated via `context`).
 
@@ -30,6 +31,7 @@ internal/fetcher/         — HTTP client (timeout, capped body size)
 internal/parser/          — link extraction from HTML (regexp, stdlib only)
 internal/crawler/         — orchestration: semaphore, WaitGroup, dedup, cancellation
 internal/robots/          — robots.txt fetching, parsing, and per-host caching
+internal/ratelimit/       — per-host rate limiting (space out requests to the same host)
 ```
 
 ## What the Code Demonstrates
@@ -40,6 +42,7 @@ internal/robots/          — robots.txt fetching, parsing, and per-host caching
 - **Race-free result handling**: workers send each `Result` through a channel rather than writing directly to stdout or a shared slice; a single goroutine (`main`) consumes and displays them.
 - **Clean result channel shutdown**: a dedicated goroutine runs `wg.Wait()` followed by `close(results)`, allowing the `range` loop in `main` to exit naturally.
 - **robots.txt** (`internal/robots`): fetched exactly once per host no matter how many goroutines ask concurrently, via `sync.Once` inside a `sync.Map`-cached entry. Parses `User-agent` groups (including grouped agent lines), applies the longest-matching-prefix rule for `Allow`/`Disallow`, and reads `Crawl-delay`. Fails open (everything allowed) if robots.txt is missing or fails to fetch — the standard convention real crawlers follow.
+- **Per-host rate limiting** (`internal/ratelimit`): a `HostLimiter` spaces out requests to the *same* host by a minimum delay (from `-min-delay`, or from that host's robots.txt `Crawl-delay` when one is specified), while different hosts never block each other. The serialization trick: each host's mutex is held for the full "wait, then record" sequence in `Wait`, so concurrent callers for one host naturally queue up in the right order instead of racing on a shared timestamp.
 
 Tested with `go build -race` and `go vet` — zero warnings.
 
@@ -58,7 +61,8 @@ Each package contains its own `xxx_test.go` file:
 - **`parser_test.go`** — pure table-driven tests (no network calls) covering relative/absolute links, deduplication, fragments, non-HTTP schemes, HTML entities, and invalid base URLs.
 - **`fetcher_test.go`** — uses `httptest.Server` to mock a real local HTTP server, testing successful requests, non-2xx status codes, `context` cancellation, and response body caps.
 - **`robots_test.go`** — covers wildcard vs. specific `User-agent` matching, grouped agent lines, `Crawl-delay` parsing, fail-open behavior on a missing robots.txt or a malformed URL, and a concurrency test proving robots.txt is fetched exactly once per host even under 20 simultaneous callers.
-- **`crawler_test.go`** — the core test suite: serves a mini website using `httptest` to verify max depth limits, deduplication of shared links, adherence to `MaxConcurrent` bounds (semaphore), `SameHostOnly` filtering, `context` cancellation halting the crawl without deadlocking, and an integration test confirming disallowed URLs are skipped rather than fetched.
+- **`ratelimit_test.go`** — covers minimum-delay enforcement, that different hosts never block each other, the zero-delay/no-default disables-limiting case, default-delay fallback, `context` cancellation mid-wait, and that concurrent calls for the same host serialize correctly (n calls take at least (n-1)×delay).
+- **`crawler_test.go`** — the core test suite: serves a mini website using `httptest` to verify max depth limits, deduplication of shared links, adherence to `MaxConcurrent` bounds (semaphore), `SameHostOnly` filtering, `context` cancellation halting the crawl without deadlocking, and integration tests confirming disallowed URLs are skipped rather than fetched, that per-host pacing is actually enforced end-to-end, and that skipped (robots-disallowed) URLs never consume rate-limiter budget.
 
 **Gotcha encountered during testing**: In two tests simulating a blocked HTTP handler (`<-block`), `defer` statement ordering was critical. Because `defer` calls run LIFO, `defer srv.Close()` blocks waiting for active requests to finish. If `close(block)` was deferred *before* `srv.Close()`, it executed *after* it, causing a deadlock. Deferring `close(block)` *after* `srv.Close()` ensures it fires first and unblocks the server.
 
@@ -69,7 +73,6 @@ Each package contains its own `xxx_test.go` file:
 ## Future Enhancements (Suggested Order)
 
 1. **Wildcard support in robots.txt**: add `*` and `$` matching (Google/Bing extension) to `directive.path` — needed to fully respect robots.txt on sites like GitHub.
-2. **Per-host rate limiting**: `internal/robots` already exposes `CrawlDelay()` — the remaining piece is a per-host limiter (mutex + `lastHit time.Time` per domain) called right after the semaphore, before `fetcher.Fetch()`.
-3. **Robust HTML parsing**: replace the regex implementation in `parser.go` with `golang.org/x/net/html` (tokenization) for resilient handling of malformed HTML.
-4. **Export formats**: output results to JSON or CSV files instead of stdout.
-5. **Worker pool alternative**: refactor goroutine spawner into a fixed worker pool consuming from a shared work channel to compare throughput and resource usage patterns.
+2. **Robust HTML parsing**: replace the regex implementation in `parser.go` with `golang.org/x/net/html` (tokenization) for resilient handling of malformed HTML.
+3. **Export formats**: output results to JSON or CSV files instead of stdout.
+4. **Worker pool alternative**: refactor goroutine spawner into a fixed worker pool consuming from a shared work channel to compare throughput and resource usage patterns.
