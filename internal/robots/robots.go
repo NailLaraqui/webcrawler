@@ -83,7 +83,7 @@ func (rs *ruleset) allowed(path string) bool {
 	bestLen := -1
 	bestAllow := true
 	for _, d := range rs.directives {
-		if !strings.HasPrefix(path, d.path) {
+		if !d.matches(path) {
 			continue
 		}
 		if len(d.path) > bestLen {
@@ -216,8 +216,9 @@ func parse(body, userAgent string) *ruleset {
 			}
 			for _, a := range currentAgents {
 				groups[a].directives = append(groups[a].directives, directive{
-					allow: key == "allow",
-					path:  value,
+					allow:   key == "allow",
+					path:    value,
+					matcher: compilePattern(value),
 				})
 			}
 		case "crawl-delay":
