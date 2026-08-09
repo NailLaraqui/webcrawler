@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,20 +21,46 @@ import (
 // "robots.txt forbids this" from a real fetch failure.
 var ErrDisallowed = errors.New("disallowed by robots.txt")
 
-// directive is a single Allow/Disallow line.
+// directive is a single Allow/Disallow line, compiled into a matcher
+// that supports the two wildcards real-world robots.txt files rely on
+// (the de facto Google/Bing extension to the original spec):
+//   - "*" matches any sequence of characters (including none)
+//   - "$" anchors the end of the path when it's the last character
 //
-// LIMITATION: matching is prefix-only (the classic original robots.txt
-// spec). Real-world robots.txt files widely use the Google/Bing
-// extension where "*" matches any sequence and "$" anchors end-of-path
-// (e.g. GitHub's "Disallow: /*/*/pulse"). Those patterns are parsed here
-// like literal path prefixes, so they will simply never match a real URL
-// — meaning such rules are effectively ignored (fail open on that
-// specific rule, not on the whole file). Fine for a learning project;
-// extend allowed() with a small glob matcher if you need to crawl sites
-// that rely on wildcard rules.
+// A plain path like "/private" with no wildcards behaves exactly like a
+// prefix match, same as before — this extension is backwards compatible.
 type directive struct {
-	allow bool
-	path  string
+	allow   bool
+	path    string // original pattern, kept for specificity comparisons
+	matcher *regexp.Regexp
+}
+
+func (d directive) matches(path string) bool {
+	return d.matcher.MatchString(path)
+}
+
+// compilePattern turns a robots.txt path pattern into a regexp anchored
+// at the start of the path (prefix match), honoring "*" and a trailing
+// "$". Every other character is escaped literally, so patterns with no
+// wildcards degrade to a plain prefix match.
+func compilePattern(pattern string) *regexp.Regexp {
+	anchorEnd := strings.HasSuffix(pattern, "$")
+	body := pattern
+	if anchorEnd {
+		body = pattern[:len(pattern)-1]
+	}
+
+	var re strings.Builder
+	re.WriteByte('^')
+	for _, segment := range strings.Split(body, "*") {
+		re.WriteString(regexp.QuoteMeta(segment))
+		re.WriteString(".*")
+	}
+	pat := strings.TrimSuffix(re.String(), ".*") // undo the trailing .* from the split loop
+	if anchorEnd {
+		pat += "$"
+	}
+	return regexp.MustCompile(pat)
 }
 
 // ruleset holds the directives that apply to us for one host, plus any
