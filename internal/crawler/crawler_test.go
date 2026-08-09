@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
+	"github.com/NailLaraqui/webcrawler/internal/ratelimit"
 	"github.com/NailLaraqui/webcrawler/internal/robots"
 )
 
@@ -283,5 +284,97 @@ func TestCrawler_RespectsRobotsTxt(t *testing.T) {
 	}
 	if okResult.Err != nil {
 		t.Errorf("/ok should have been fetched normally, got err %v", okResult.Err)
+	}
+}
+
+func TestCrawler_RespectsRateLimiter(t *testing.T) {
+	// Root links to 4 pages on the same host. With a 50ms per-host delay
+	// and MaxConcurrent high enough to not be the bottleneck, fetching
+	// all 5 pages (root + 4) must take at least 4*50ms, because they all
+	// share one host and the limiter serializes them in time.
+	graph := map[string][]string{
+		"/":  {"/a", "/b", "/c", "/d"},
+		"/a": {}, "/b": {}, "/c": {}, "/d": {},
+	}
+	srv := newLinkedSite(t, graph)
+	defer srv.Close()
+
+	fc := fetcher.New(2 * time.Second)
+	limiter := ratelimit.New(50 * time.Millisecond)
+	cw := New(Config{MaxDepth: 1, MaxConcurrency: 10, RateLimiter: limiter}, fc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	visited := 0
+	for r := range cw.Run(ctx, srv.URL+"/") {
+		if r.Err != nil {
+			t.Errorf("unexpected error visiting %s: %v", r.URL, r.Err)
+		}
+		visited++
+	}
+	elapsed := time.Since(start)
+
+	if visited != 5 {
+		t.Fatalf("visited %d pages, want 5", visited)
+	}
+	want := 4 * 50 * time.Millisecond
+	if elapsed < want-15*time.Millisecond {
+		t.Errorf("crawl took %v, want at least ~%v given the per-host rate limit", elapsed, want)
+	}
+}
+
+func TestCrawler_RateLimiterDoesNotThrottleDisallowedURLs(t *testing.T) {
+	// robots.txt disallows everything under /skip: none of those pages
+	// should ever consume rate-limiter budget, since they're never
+	// actually fetched. If the crawler mistakenly rate-limited before
+	// checking robots.txt, these 4 same-host "skip" fetches would
+	// serialize behind each other and the crawl would take roughly
+	// 4x the per-host delay; done correctly, it should be near-instant.
+	const delay = 200 * time.Millisecond
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("User-agent: *\nDisallow: /skip\n"))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`<a href="/skip1">1</a><a href="/skip2">2</a><a href="/skip3">3</a><a href
+			="/skip4">4</a>`))
+	})
+	for _, p := range []string{"/skip1", "/skip2", "/skip3", "/skip4"} {
+		mux.HandleFunc(p, func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("should never be fetched"))
+		})
+	}
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	fc := fetcher.New(2 * time.Second)
+	checker := robots.New(fc, fetcher.UserAgent)
+	limiter := ratelimit.New(delay)
+
+	cw := New(Config{MaxDepth: 1, MaxConcurrency: 10, Robots: checker, RateLimiter: limiter}, fc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	results := map[string]Result{}
+	for r := range cw.Run(ctx, srv.URL+"/") {
+		results[r.URL] = r
+	}
+	elapsed := time.Since(start)
+
+	// If the 4 disallowed pages had wrongly consumed rate-limiter slots,
+	// this would take at least 3*delay (they'd serialize behind each
+	// other on the shared host). Correctly skipped, it's near-instant.
+	if elapsed > 2*delay {
+		t.Errorf("crawl took %v: disallowed URLS may have consumed rate-limiter budget unnecessarily", elapsed)
+	}
+	for _, p := range []string{"/skip1", "/skip2", "/skip3", "/skip4"} {
+		if !errors.Is(results[srv.URL+p].Err, robots.ErrDisallowed) {
+			t.Errorf("%s should be disallowed, got %v", p, results[srv.URL+p].Err)
+		}
 	}
 }
