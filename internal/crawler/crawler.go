@@ -5,9 +5,11 @@ import (
 	"context"
 	"net/url"
 	"sync"
+	"time"
 
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
 	"github.com/NailLaraqui/webcrawler/internal/parser"
+	"github.com/NailLaraqui/webcrawler/internal/ratelimit"
 	"github.com/NailLaraqui/webcrawler/internal/robots"
 )
 
@@ -29,6 +31,12 @@ type Config struct {
 	// disallows are reported as a Result with Err = robots.ErrDisallowed
 	// instead of being fetched. Leave nil to skip robots.txt entirely.
 	Robots *robots.Checker
+
+	// RateLimiter, if non-nil, is used to space out requests to the same
+	// host. If Robots is also set and a host specifies Crawl-delay, that
+	// value is used for that host; otherwise RateLimiter's own default
+	// delay applies. Leave nil to disable per-host rate limiting.
+	RateLimiter *ratelimit.HostLimiter
 }
 
 // Crawler crawls pages concurrently starting from a seed URL.
@@ -120,6 +128,22 @@ func (c *Crawler) worker(ctx context.Context, j job) {
 		return
 	}
 
+	// Per-host pacing happens after the robots.txt check (no point
+	// waiting to fetch a page we're about to skip) but before the
+	// actual page fetch. It deliberately does NOT throttle the
+	// robots.txt fetch itself — that one is already a single flight per
+	// host via sync.Once in the robots package.
+	if c.cfg.RateLimiter != nil {
+		host := hostOf(j.url)
+		delay := time.Duration(0)
+		if c.cfg.Robots != nil {
+			delay = c.cfg.Robots.CrawlDelay(ctx, j.url)
+		}
+		if err := c.cfg.RateLimiter.Wait(ctx, host, delay); err != nil {
+			return // context was cancelled while waiting
+		}
+	}
+
 	body, err := c.fetch.Fetch(ctx, j.url)
 
 	result := Result{URL: j.url, Depth: j.depth, Err: err}
@@ -160,4 +184,14 @@ func (c *Crawler) filterLinks(links []string) []string {
 	}
 
 	return filtered
+}
+
+// hostOf extracts the host from a URL string, returning "" if it can't
+// be parsed. Used as the rate limiter's bucket key.
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
