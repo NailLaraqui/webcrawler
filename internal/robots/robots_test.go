@@ -200,3 +200,120 @@ Disallow: /secret
 		t.Error("/secret should be disallowed")
 	}
 }
+
+func TestAllowed_MidPathWildcard(t *testing.T) {
+	// GitHub's real robots.txt uses exactly this shape:
+	// "Disallow: /*/*/pulse" — two path segments, then a wildcard, then
+	// a literal segment.
+	robotsTxt := "User-agent: *\nDisallow: /*/*/pulse\n"
+	srv := newRobotsServer(t, robotsTxt)
+	defer srv.Close()
+
+	c := New(fetcher.New(2*time.Second), "go-webcrawler")
+	ctx := context.Background()
+
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/golang/go/pulse", false},
+		{"/golang/go/pulse/monthly", false}, // no trailing $, so anything after still matches
+		{"/golang/go/issues", true},
+		{"/golang/go", true},
+	}
+	for _, tc := range cases {
+		if got := c.Allowed(ctx, srv.URL+tc.path); got != tc.want {
+			t.Errorf("Allowed(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestAllowed_WildcardStar(t *testing.T) {
+	robotsTxt := "User-agent: *\nDisallow: /private*/data\n"
+	srv := newRobotsServer(t, robotsTxt)
+	defer srv.Close()
+
+	c := New(fetcher.New(2*time.Second), "go-webcrawler")
+	ctx := context.Background()
+
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/private/data", false},
+		{"/private-area/data", false},
+		{"/private-area/data/more", false}, // open-ended, no $
+		{"/public/data", true},
+		{"/private-area/other", true}, // "/data" segment never appears
+	}
+
+	for _, tc := range cases {
+		if got := c.Allowed(ctx, srv.URL+tc.path); got != tc.want {
+			t.Errorf("Allowed(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestAllowed_EndAnchorDollar(t *testing.T) {
+	robotsTxt := "User-agent: *\nDisallow: /*.pdf$\n"
+	srv := newRobotsServer(t, robotsTxt)
+	defer srv.Close()
+
+	c := New(fetcher.New(2*time.Second), "go-webcrawler")
+	ctx := context.Background()
+
+	cases := []struct {
+		path string
+		want bool
+	}{
+		{"/files/report.pdf", false},
+		{"/report.pdf", false},
+		{"/report.pdf.html", true}, // "$" anchors the end, this doesn't end in .pdf
+		{"/report.pdfx", true},
+	}
+
+	for _, tc := range cases {
+		if got := c.Allowed(ctx, srv.URL+tc.path); got != tc.want {
+			t.Errorf("Allowed(%s) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestAllowed_WildcardSpecificityStillPicksLongestMatch(t *testing.T) {
+	// A more specific Allow should still win over a broader wildcard
+	// Disallow, same as the plain-prefix case, now that both compile to
+	// matchers rather than simple string prefixes.
+	robotsTxt := "User-agent: *\nDisallow: /assets/*\nAllow: /assets/public/*\n"
+	srv := newRobotsServer(t, robotsTxt)
+	defer srv.Close()
+
+	c := New(fetcher.New(2*time.Second), "go-webcrawler")
+	ctx := context.Background()
+
+	if !c.Allowed(ctx, srv.URL+"/assets/public/logo.png") {
+		t.Error("/assets/public/logo.png should be allowed (more specific Allow rule)")
+	}
+
+	if c.Allowed(ctx, srv.URL+"/assets/private/logo.png") {
+		t.Error("/assets/private/logo.png should be disallowed (broader Disallow rule)")
+	}
+}
+
+func TestAllowed_PlainPrefixStillWorksAsBefore(t *testing.T) {
+	// No wildcards at all: must behave exactly like a plain prefix match,
+	// same as before this feature was added.
+	robotsTxt := "User-agent: *\nDisallow: /private\n"
+	srv := newRobotsServer(t, robotsTxt)
+	defer srv.Close()
+
+	c := New(fetcher.New(2*time.Second), "go-webcrawler")
+	ctx := context.Background()
+
+	if c.Allowed(ctx, srv.URL+"/private/secret") {
+		t.Error("/private/secret should be disallowed by plain prefix /private")
+	}
+
+	if !c.Allowed(ctx, srv.URL+"/publicity") {
+		t.Error("/publicity should be allowed, it doesn't start with /private")
+	}
+}
