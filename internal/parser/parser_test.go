@@ -57,6 +57,55 @@ func TestExtractLinks(t *testing.T) {
 			base: "https://example.com",
 			want: []string{"https://example.com/good"},
 		},
+		{
+			// A regexp would either need a special case for unquoted
+			// attributes or silently miss this link entirely; a real
+			// tokenizer handles it the same way a browser would.
+			name: "unquoted attribute value",
+			base: "https://example.com",
+			body: `<a href=/no-quotes>link</a>`,
+			want: []string{"https://example.com/no-quotes"},
+		},
+		{
+			// Unclosed <a> tag followed by more markup — the kind of
+			// malformed HTML real sites produce constantly. A regexp
+			// matching on `href=...` alone doesn't care whether tags
+			// are ever closed, but this is exactly the class of input
+			// the tokenizer is meant to handle gracefully instead of
+			// getting confused by.
+			name: "unclosed tag before another link",
+			base: "https://example.com",
+			body: `<a href="/first"><p>oops no closing tag<a href="/second">second</a>`,
+			want: []string{"https://example.com/first", "https://example.com/second"},
+		},
+		{
+			// href inside a <script> block must NOT be extracted — it's
+			// not a real link, it's JS source text. A naive regexp over
+			// raw bytes can't tell the difference; a tokenizer that
+			// understands script-tag content can.
+			name: "href-like text inside script tag is ignored",
+			base: "https://example.com",
+			body: `<script>var = '<a href="/fake-link">not real</a>';</script><a href="/real">real</a>`,
+			want: []string{"https://example.com/real"},
+		},
+		{
+			// Attributes in mixed order, extra whitespace, and other
+			// attributes present alongside href — the tokenizer parses
+			// attributes by name, not by position or exact spacing.
+			name: "extra attributes and irregular spacing",
+			base: "https://example.com",
+			body: `<a 	class="btn"   href = "/spaced"  target="_blank" >click</a>`,
+			want: []string{"https://example.com/spaced"},
+		},
+		{
+			// A named HTML entity (not just &amp;) in the href, to
+			// confirm the tokenizer's built-in unescaping isn't limited
+			// to the one entity the old regexp-era code handled by hand.
+			name: "named entity othen than amp",
+			base: "https://example.com",
+			body: `<a href="/caf&eacute;">caf&eacute;</a>`,
+			want: []string{"https://example.com/caf%C3%A9"},
+		},
 	}
 
 	for _, tc := range cases {
