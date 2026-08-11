@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/NailLaraqui/webcrawler/internal/crawler"
+	"github.com/NailLaraqui/webcrawler/internal/export"
 	"github.com/NailLaraqui/webcrawler/internal/fetcher"
 	"github.com/NailLaraqui/webcrawler/internal/ratelimit"
 	"github.com/NailLaraqui/webcrawler/internal/robots"
@@ -27,6 +28,7 @@ func main() {
 		sameHost       = flag.Bool("same-host", true, "only follow links on the same host as the seed URL")
 		respectsRobots = flag.Bool("respect-robots", true, "check robots.txt before fetching each page")
 		minDelay       = flag.Duration("min-delay", 0, "default minimum delay between requests to the same host (a host's robots.txt Crawl-delay, if present, is used instead for that host)")
+		csvPath        = flag.String("csv", "", "write results to this path as CSV in addition to stdout (e.g. -csv results.csv)")
 	)
 	flag.Parse()
 
@@ -71,10 +73,14 @@ func main() {
 	fmt.Printf("Crawling %s (depth=%d, concurrency=%d, timeout=%s)\n\n", *start, *maxDepth, *maxConcurrent, *timeout)
 
 	var visited, failed, skipped, totalLinks int
+	var results []crawler.Result
 	started := time.Now()
 
 	for r := range cw.Run(ctx, *start) {
 		visited++
+		if *csvPath != "" {
+			results = append(results, r)
+		}
 		indent := strings.Repeat(" ", r.Depth)
 		switch {
 		case errors.Is(r.Err, robots.ErrDisallowed):
@@ -91,6 +97,14 @@ func main() {
 
 	fmt.Printf("\ndone in %s - %d pages visited, %d failed, %d skipped (robots.txt), %d links discovered\n",
 		time.Since(started).Round(time.Millisecond), visited, failed, skipped, totalLinks)
+
+	if *csvPath != "" {
+		if err := export.WriteCSVFile(*csvPath, results); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write CSV to %s: %v\n", *csvPath, err)
+		} else {
+			fmt.Printf("results written to %s\n", *csvPath)
+		}
+	}
 
 	if err := ctx.Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "crawl stopped early: %v\n", err)
