@@ -168,7 +168,13 @@ func (c *Crawler) worker(ctx context.Context, j job) {
 }
 
 func (c *Crawler) filterLinks(links []string) []string {
-	if !c.cfg.SameHostOnly {
+	return filterLinks(links, c.cfg.SameHostOnly, c.seedHost)
+}
+
+// filterLinks is shared between Crawler and PoolCrawler so the two
+// implementations can't silently drift in same-host behaviour.
+func filterLinks(links []string, sameHostOnly bool, seedHost string) []string {
+	if !sameHostOnly {
 		return links
 	}
 
@@ -178,7 +184,7 @@ func (c *Crawler) filterLinks(links []string) []string {
 		if err != nil {
 			continue
 		}
-		if u.Host == c.seedHost {
+		if u.Host == seedHost {
 			filtered = append(filtered, l)
 		}
 	}
