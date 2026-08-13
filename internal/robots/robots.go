@@ -268,9 +268,6 @@ func selectGroup(groups map[string]*ruleset, userAgent string) *ruleset {
 }
 
 func stripComment(line string) string {
-	if i := strings.IndexByte(line, '#'); i >= 0 {
-		return line[:i]
-	}
-
-	return line
+	before, _, _ := strings.Cut(line, "#")
+	return before
 }
