@@ -85,5 +85,4 @@ Each package contains its own `xxx_test.go` file:
 
 ## Future Enhancements (Suggested Order)
 
-1. **Export formats**: output results to JSON or CSV files instead of stdout.
-2. **Worker pool alternative**: refactor goroutine spawner into a fixed worker pool consuming from a shared work channel to compare throughput and resource usage patterns.
+1. **Worker pool alternative**: refactor goroutine spawner into a fixed worker pool consuming from a shared work channel to compare throughput and resource usage patterns.
