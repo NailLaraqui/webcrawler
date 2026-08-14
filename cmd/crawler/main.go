@@ -30,6 +30,7 @@ func main() {
 		minDelay       = flag.Duration("min-delay", 0, "default minimum delay between requests to the same host (a host's robots.txt Crawl-delay, if present, is used instead for that host)")
 		csvPath        = flag.String("csv", "", "write results to this path as CSV in addition to stdout (e.g. -csv results.csv)")
 		usePool        = flag.Bool("use-pool", false, "use the experimental worker-pool crawler instead of the semaphore one")
+		jsonPath       = flag.String("json", "", "write results to this path as JSON in addition to stdout (e.g. -json results.json)")
 	)
 	flag.Parse()
 
@@ -114,6 +115,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "failed to write CSV to %s: %v\n", *csvPath, err)
 		} else {
 			fmt.Printf("results written to %s\n", *csvPath)
+		}
+	}
+
+	if *jsonPath != "" {
+		if err := export.WriteJSONFile(*jsonPath, results); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write JSON to %s: %v\n", *jsonPath, err)
+		} else {
+			fmt.Printf("results written to %s\n", *jsonPath)
 		}
 	}
 
