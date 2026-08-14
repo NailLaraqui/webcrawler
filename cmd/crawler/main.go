@@ -29,6 +29,7 @@ func main() {
 		respectsRobots = flag.Bool("respect-robots", true, "check robots.txt before fetching each page")
 		minDelay       = flag.Duration("min-delay", 0, "default minimum delay between requests to the same host (a host's robots.txt Crawl-delay, if present, is used instead for that host)")
 		csvPath        = flag.String("csv", "", "write results to this path as CSV in addition to stdout (e.g. -csv results.csv)")
+		usePool        = flag.Bool("use-pool", false, "use the experimental worker-pool crawler instead of the semaphore one")
 	)
 	flag.Parse()
 
@@ -62,21 +63,31 @@ func main() {
 		limiter = ratelimit.New(*minDelay)
 	}
 
-	cw := crawler.New(crawler.Config{
+	cfg := crawler.Config{
 		MaxDepth:       *maxDepth,
 		MaxConcurrency: *maxConcurrent,
 		SameHostOnly:   *sameHost,
 		Robots:         robotsChecker,
 		RateLimiter:    limiter,
-	}, fc)
+	}
 
-	fmt.Printf("Crawling %s (depth=%d, concurrency=%d, timeout=%s)\n\n", *start, *maxDepth, *maxConcurrent, *timeout)
+	var resultsChan <-chan crawler.Result
+	mode := "semaphore"
+
+	if *usePool {
+		mode = "worker pool"
+		resultsChan = crawler.NewPool(cfg, fc).Run(ctx, *start)
+	} else {
+		resultsChan = crawler.New(cfg, fc).Run(ctx, *start)
+	}
+
+	fmt.Printf("Crawling %s (depth=%d, concurrency=%d, timeout=%s) [mode: %s]\n\n", *start, *maxDepth, *maxConcurrent, *timeout, mode)
 
 	var visited, failed, skipped, totalLinks int
 	var results []crawler.Result
 	started := time.Now()
 
-	for r := range cw.Run(ctx, *start) {
+	for r := range resultsChan {
 		visited++
 		if *csvPath != "" {
 			results = append(results, r)
