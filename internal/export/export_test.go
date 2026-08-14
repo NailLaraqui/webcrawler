@@ -3,6 +3,7 @@ package export
 import (
 	"bytes"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -124,6 +125,92 @@ func TestWriteCSVFile_InvalidPathReturnsError(t *testing.T) {
 	}
 }
 
+func TestWriteJSON_StructureAndValues(t *testing.T) {
+	results := []crawler.Result{
+		{URL: "https://example.com/", Depth: 0, LinksFound: 3},
+		{URL: "https://example.com/a", Depth: 1, Err: errors.New("connection reset")},
+		{URL: "https://example.com/b", Depth: 1, Err: robots.ErrDisallowed},
+	}
+
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, results); err != nil {
+		t.Fatalf("WriteJSON returned error: %v", err)
+	}
+
+	var got []JSONResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("failed to parse generated JSON: %v", err)
+	}
+
+	if len(got) != len(results) {
+		t.Fatalf("got %d items, want %d", len(got), len(results))
+	}
+
+	if !JSONAndCrawlResultEqual(&got[0], &results[0]) {
+		t.Errorf("got[0] = %+v, want URL='https://example.com/', Depth=0, LinksFound=3, Error=''", got[0])
+	}
+
+	if !JSONAndCrawlResultEqual(&got[1], &results[1]) {
+		t.Errorf("got[1] = %+v, want URL='https://example.com/a', Depth=1, Error='connection reset'", got[1])
+	}
+
+	if !JSONAndCrawlResultEqual(&got[2], &results[2]) {
+		t.Errorf("got[2] = %+v, want URL='https://example.com/b', Depth=1, Error=%q", got[2], robots.ErrDisallowed.Error())
+	}
+}
+
+func TestWriteJSON_EmptyResults(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, nil); err != nil {
+		t.Fatalf("WriteJSON returned error: %v", err)
+	}
+
+	var got []JSONResult
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("failed to parse generated JSON for empty results: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("got %d items, want 0", len(got))
+	}
+}
+
+func TestWriteJSONFile_WritesToDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "results.json")
+
+	results := []crawler.Result{
+		{URL: "https://example.com/", Depth: 0, LinksFound: 2},
+	}
+	if err := WriteJSONFile(path, results); err != nil {
+		t.Fatalf("WriteJSONFile returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read written file: %v", err)
+	}
+
+	var got []JSONResult
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("failed to parse written JSON file: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("got %d items, want 1", len(got))
+	}
+	if got[0].URL != "https://example.com/" {
+		t.Errorf("got[0].URL = %q, want 'https://example.com/'", got[0].URL)
+	}
+}
+
+func TestWriteJSONFile_InvalidPathReturnsError(t *testing.T) {
+	err := WriteJSONFile("/nonexistent-dir-xyz/results.json", nil)
+	if err == nil {
+		t.Fatalf("expected an error writing to a nonexistent directory, got nil")
+	}
+}
+
 func equalRows(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -134,4 +221,14 @@ func equalRows(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func JSONAndCrawlResultEqual(a *JSONResult, b *crawler.Result) bool {
+
+	errBStr := ""
+	if b.Err != nil {
+		errBStr = b.Err.Error()
+	}
+
+	return a.URL == b.URL && a.Depth == b.Depth && a.LinksFound == b.LinksFound && a.Error == errBStr
 }
