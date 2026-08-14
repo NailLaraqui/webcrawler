@@ -122,7 +122,7 @@ func NewPool(cfg Config, fc *fetcher.Client) *PoolCrawler {
 // of Results, closed once every reachable page has been visited (or ctx
 // is cancelled). Same contract as Crawler.Run.
 func (c *PoolCrawler) Run(ctx context.Context, start string) <-chan Result {
-	if u, err := url.Parse(start); err != nil {
+	if u, err := url.Parse(start); err == nil {
 		c.seedHost = u.Host
 	}
 
