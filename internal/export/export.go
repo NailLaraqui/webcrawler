@@ -3,7 +3,9 @@ package export
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -71,4 +73,49 @@ func WriteCSVFile(path string, results []crawler.Result) (err error) {
 	}()
 
 	return WriteCSV(f, results)
+}
+
+// JSONResult represents the structured JSON output for a single crawled page.
+// Using explicit struct tags ensures clean field names in the output.
+type JSONResult struct {
+	URL        string `json:"url"`
+	Depth      int    `json:"depth"`
+	LinksFound int    `json:"links_found"`
+	Error      string `json:"error,omitempty"` // Format the error to string (or omits the field if nil)
+}
+
+// WriteJSON writes the crawling results formatted as JSON to the provided writer.
+func WriteJSON(w io.Writer, results []crawler.Result) error {
+	jsonResults := make([]JSONResult, len(results))
+	for i, r := range results {
+		errStr := ""
+		if r.Err != nil {
+			errStr = r.Err.Error()
+		}
+		jsonResults[i] = JSONResult{
+			URL:        r.URL,
+			Depth:      r.Depth,
+			LinksFound: r.LinksFound,
+			Error:      errStr,
+		}
+	}
+
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(jsonResults); err != nil {
+		return fmt.Errorf("failed to encode results to JSON: %w", err)
+	}
+
+	return nil
+}
+
+// WriteJSONFile creates or overwrites a JSON file at the specified path and writes results to it
+func WriteJSONFile(filePath string, results []crawler.Result) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create JSON file %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	return WriteJSON(file, results)
 }
