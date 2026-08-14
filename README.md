@@ -28,6 +28,8 @@ Available flags:
 | `-min-delay` | 0 | Default minimum delay between requests to the same host (a host's robots.txt Crawl-delay, if present, is used instead for that host) |
 | `-csv` | - | Write results to this path as CSV in addition to stdout (e.g. `-csv results.csv`) |
 | `-use-pool` | false | Use the worker-pool crawler instead of the semaphore crawler |
+| `-json` | - | Write results to this path as JSON in addition to stdout (e.g. `-csv results.json`) |
+
 
 Pressing `Ctrl + C` gracefully interrupts the crawl (propagated via `context`).
 
@@ -54,7 +56,7 @@ internal/crawler/         — orchestration:
                             • pool.go: fixed N-worker pool fed by an unbounded sync.Cond queue
 internal/robots/          — robots.txt fetching, parsing, and per-host caching
 internal/ratelimit/       — per-host rate limiting (space out requests to the same host)
-internal/export/          — CSV export functionality 
+internal/export/          — CSV and JSON exports functionality
 ```
 
 ## What the Code Demonstrates
@@ -102,5 +104,4 @@ Each package contains its own `xxx_test.go` file:
 
 ## Future Enhancements (Suggested Order)
 
-1. **Additional Export Formats**: Extend output capabilities to produce JSON reports alongside CSV.
-2. **Dynamic Worker Resizing**: Allow expanding or shrinking worker pool concurrency dynamically during execution based on server performance or latency metrics.
+1. **Dynamic Worker Resizing**: Allow expanding or shrinking worker pool concurrency dynamically during execution based on server performance or latency metrics.
