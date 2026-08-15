@@ -4,6 +4,17 @@ Small concurrent crawler in Go, written as a learning project to practice concur
 
 ## How to Run
 
+Display help message:
+```bash
+go run ./cmd/crawler -h
+```
+
+Or
+
+```bash
+go run ./cmd/crawler --help
+```
+
 Default execution (Semaphore pattern):
 ```bash
 go run ./cmd/crawler -url https://example.com -depth 2 -concurrency 8
