@@ -28,6 +28,8 @@ do
     echo "Compiling for ${GOOS}/${GOARCH}..."
     env GOOS=$GOOS GOARCH=$GOARCH go build -o $output_name ./cmd/crawler/main.go
 
+    chmod +x $output_name
+
     if [ $? -ne 0 ]; then
             echo "An error occurred! Aborting the build process."
             exit 1
